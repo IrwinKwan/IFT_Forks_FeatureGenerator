@@ -12,18 +12,16 @@ from collections import OrderedDict
 
 
 class Constants:
-    """Constants for this program"""
     DB = os.path.join('..', 'IFT_Forks_DB', 'ift_forks.sqlite')
     OUTFILE = "ift_features-" + datetime.datetime.now().strftime("_-_%Y-%m-%d_%H%M") + ".arff"
     NAME = "iftforks"
-    BEFORE = -60
-    FORKSTART = 0
-    FORKEND = 30
-    AFTER = 60
+    BEFORE = -60 # in seconds
+    FORKSTART = 0 # in seconds
+    FORKEND = 30 # in seconds
+    AFTER = 60 # in seconds
 
 
 class Groups:
-    """Groups create a grouping of various events, for example, things that are searches, or debugging, etc."""
     search = ['org.eclipse.ui.edit.findNext',
         'org.eclipse.search.ui.performTextSearchFile',
         'org.eclipse.search.ui.openSearchDialog',
@@ -44,7 +42,6 @@ class Groups:
 
 
 def num_to_bool(number):
-    """Converts a number to a boolean, used to make a count into a exists/not exists."""
     if number == 0:
         return False
     elif number > 0:
@@ -54,15 +51,22 @@ def num_to_bool(number):
         return None
 
 def confirmed_forks(c):
-    """Gets a list of forks that have a retrospective entry."""
     forks_query = "SELECT participant, videotime, retrospective, forks FROM codes \
         WHERE (retrospective <> '')"
     return c.execute(forks_query)
 
 
+def time_range(c, event, start, after):
+    range_query = "SELECT COUNT(*) FROM commands WHERE EXISTS \
+        ( SELECT videotime FROM \
+            (SELECT videotime FROM codes WHERE \
+            (retrospective ='y' AND forks > 0)) AS times \
+        WHERE strftime('%s', commands.videotime) - strftime('%s', times.videotime) >= -? \
+        AND strftime('%s', commands.videotime) - strftime('%s', times.videotime) <= ?)"
+    return c.execute(range_query, (start, after))
+
+
 def num_commands_at_fork(c, fork_row, event, start, after):
-    """Gets the number of commands for a specified Command event 'start' seconds before the fork and 'after' seconds after the
-    start of the fork."""
     q = "SELECT COUNT(*) FROM commands WHERE \
         command = ? \
         AND EXISTS \
@@ -81,8 +85,6 @@ def num_commands_at_fork(c, fork_row, event, start, after):
 
 
 def num_eclipsecommands_at_fork(c, fork_row, event, start, after):
-    """Gets the number of commands for a specified EclipseCommand event 'start' seconds before the fork and 'after' seconds after the
-    start of the fork."""
     q = "SELECT COUNT(*) FROM commands WHERE \
         eclipsecommand = ? \
         AND EXISTS \
@@ -100,7 +102,6 @@ def num_eclipsecommands_at_fork(c, fork_row, event, start, after):
         fork_row['participant'])).fetchone()[0]
 
 def num_search_before_select(c, fork_row, start, after):
-    """Counts the number of SelectTextCommands that occur after a search before a fork."""
     exists = 0
 
     q = "SELECT * FROM commands WHERE \
@@ -126,7 +127,7 @@ def num_search_before_select(c, fork_row, start, after):
 
         for j in result_set_forks:
             search_time = j['videotime']
-
+            
             result_set_opens = c.execute(r, (search_time, fork_row['videotime'], after))
             for k in result_set_opens:
                 exists += 1
@@ -134,7 +135,6 @@ def num_search_before_select(c, fork_row, start, after):
     return exists
 
 def num_search_before_open(c, fork_row, start, after):
-    """Counts the number of FileOpenCommands that occur after a search before a fork."""
     exists = 0
 
     q = "SELECT * FROM commands WHERE \
@@ -160,7 +160,7 @@ def num_search_before_open(c, fork_row, start, after):
 
         for j in result_set_forks:
             search_time = j['videotime']
-
+            
             result_set_opens = c.execute(r, (search_time, fork_row['videotime'], after))
             for k in result_set_opens:
                 exists += 1
@@ -211,7 +211,6 @@ def num_editing_after(c, fork_row):
         + num_commands_at_fork(c, fork_row, 'UndoCommand', b, a)    
 
 def num_debugging_before(c, fork_row):
-    """Debugging commands before a fork"""
     b = Constants.BEFORE
     a = Constants.FORKEND
 
@@ -222,7 +221,6 @@ def num_debugging_before(c, fork_row):
     return total
 
 def num_debugging_after(c, fork_row):
-    """Debugging commands after a fork"""
     b = Constants.FORKEND
     a = Constants.AFTER
 
@@ -264,32 +262,30 @@ def num_searching_after(c, fork_row):
 
 
 def coded_as_fork(fork_row):
-    """How the fork is coded"""
     if (fork_row['forks'] > 0 and fork_row['retrospective'] == 'y'):
-        #return "TrueFork" # True because everyone agreed that it's a fork
+        #return "TrueFork"
         return "Fork"
     elif (fork_row['forks'] == 0 and fork_row['retrospective'] == 'n'):
-        #return "HiddenFork" # Hidden because the participant thought it was a fork, but it was hidden from our coders
+        #return "HiddenFork"
         return "Fork"
     elif (fork_row['forks'] > 0 and fork_row['retrospective'] == 'n'):
-        #return "FakeFork" # Fake because the coders thought it was a fork, but it was fake as announced by the participant
+        #return "FakeFork"
         return "NotFork"
     elif (fork_row['forks'] == 0 and fork_row['retrospective'] == 'y'):
-        #return "NotFork" # NotFork because everyone agreed that it isn't a fork
+        #return "NotFork"
         return "NotFork"
     else:
         raise ForkException("Fork conditions appear incorrect. Please check it!\n\t%s" % fork_row)
 
 def gather_features(c, fork_row):
-    """A list of the features"""
     # participant = str(fork_row['participant'])
     # videotime = fork_row['videotime']
 
     attributes = [
         # participant,
         # videotime,
-        num_commands_before(c, fork_row, 'FileOpenCommand'),
-        num_commands_after(c, fork_row, 'FileOpenCommand'),
+        num_to_bool(num_commands_before(c, fork_row, 'FileOpenCommand')),
+        num_to_bool(num_commands_after(c, fork_row, 'FileOpenCommand')),
         num_commands_before(c, fork_row, 'SelectTextCommand'),
         num_commands_after(c, fork_row, 'SelectTextCommand'),
         num_editing_before(c, fork_row),
@@ -310,29 +306,27 @@ def gather_features(c, fork_row):
 
     output = ""
     for attribute in attributes:
-        output += "%2d," % attribute
+        output += str(attribute) + ","
     output += " "
-
-    for attribute1 in range(0, len(attributes)):
-        for attribute2 in range(attribute1 + 1, len(attributes)):
-            output += "%2d," % (attributes[attribute1] + attributes[attribute2])
-        output += " "
+    
+    # for attribute1 in range(0, len(attributes)):
+    #     for attribute2 in range(attribute1 + 1, len(attributes)):
+    #         output += str(attributes[attribute1] + attributes[attribute2]) + ","
+    #     output += " "
 
     output += str(coded_as_fork(fork_row)) + "\n"
     return output
 
 
 def header():
-    """Outputs the ARFF header. If you change the features in gather_features, you have to change the
-    header as well and add the relations."""
     output = "@RELATION " + Constants.NAME + "\n\n"
 
     relations = OrderedDict()
     # relations['participant'] = 'STRING'
     # relations['videotime'] = 'STRING'
 
-    relations['opens_before'] = 'NUMERIC'
-    relations['opens_after'] = 'NUMERIC'
+    relations['opens_before'] = '{True, False}'
+    relations['opens_after'] = '{True, False}'
     relations['selects_before'] = 'NUMERIC'
     relations['selects_after'] = 'NUMERIC'
     relations['edits_before'] = 'NUMERIC'
@@ -359,16 +353,16 @@ def header():
         output += "@ATTRIBUTE " + k + " " + v + "\n"
     output += "\n"
 
-    keys = relations.keys()
-    for k1 in range(0, len(keys)):
-        for k2 in range(k1 + 1, len(keys)):
+    # keys = relations.keys()
+    # for k1 in range(0, len(keys)):
+    #     for k2 in range(k1 + 1, len(keys)):
 
-            output += "@ATTRIBUTE " + keys[k1] + "-plus-" + keys[k2] + " " + relations[keys[k2]] + "\n"
-        output += "\n"
+    #         output += "@ATTRIBUTE " + keys[k1] + "-plus-" + keys[k2] + " " + relations[keys[k2]] + "\n"
+    #     output += "\n"
 
     # output += "@ATTRIBUTE real_fork {Fork, TrueFork, HiddenFork, FakeFork, NotFork}"
     output += "@ATTRIBUTE real_fork {Fork, NotFork}"
-
+    
     output += "\n\n@DATA\n"
 
     return output
