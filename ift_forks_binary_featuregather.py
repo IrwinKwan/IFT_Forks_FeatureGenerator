@@ -2,6 +2,9 @@
 """Creates an ARFF file for use in WEKA based on the features in the
 commands and the codes SQLite database.
 
+This file might be broken; instead of having two files it should be incorporated into one file with a few
+command line switches.
+
 This particular classifier makes "binary" features where we test
 for existence or non-existence of a command Constants.BEFORE seconds before a fork."""
 
