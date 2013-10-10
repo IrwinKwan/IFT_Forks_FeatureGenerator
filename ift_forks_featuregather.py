@@ -21,6 +21,13 @@ class Constants:
     FORKEND = 30
     AFTER = 30
 
+    """Whether to output the attribute counts as binned nominal data"""
+    CATEGORY = True
+
+    """Whether to output the attribute counts as boolean nominal data"""
+    BINARY = True
+
+    """Whether to include two-factor interactions"""
     TWO_FACTOR = False
 
 
@@ -52,7 +59,7 @@ def num_to_bool(number):
     elif number > 0:
         return True
     else:
-        raise Exception("A natural number is less than 0 is being converted to a bool.")
+        raise Exception("A natural number less than 0 is being converted to a bool.")
         return None
 
 def num_to_categories(number, category_map = None):
@@ -309,6 +316,12 @@ def make_features_into_categories(attributes):
         categories.append(num_to_categories(attribute))
     return categories
 
+def make_features_into_booleans(attributes):
+    booleans = []
+    for attribute in attributes:
+        booleans.append(num_to_bool(attribute))
+    return booleans
+
 def gather_features(c, fork_row):
     """A list of the features"""
     # participant = str(fork_row['participant'])
@@ -338,8 +351,19 @@ def gather_features(c, fork_row):
     ]
 
     # Gather all of the attributes again, but put them into categories.
-    categories = make_features_into_categories(attributes);
-    attributes += categories
+    categories = []
+    if Constants.CATEGORY:
+        categories += make_features_into_categories(attributes)
+
+    booleans = []
+    if Constants.BINARY:
+        booleans += make_features_into_booleans(attributes) 
+
+    if Constants.CATEGORY:
+        attributes += categories
+
+    if Constants.BINARY:
+        attributes += booleans
 
     return attributes
 
@@ -389,6 +413,14 @@ def _header_categories(relations):
     output += "\n"
     return output
 
+def _header_binary(relations):
+    """For each attribute, output the version that is a categorical variable."""
+    output = ""
+    for k,v in relations.iteritems():
+        output += "@ATTRIBUTE " + 'binary__' + k + " " + '{True,False,None}' + "\n"
+    output += "\n"
+    return output
+
 def _header_two_factor_effects(relations):
     output = ""
     keys = relations.keys()
@@ -432,10 +464,13 @@ def header():
     relations['exists_search_before_open'] = 'NUMERIC'
     relations['exists_search_before_select'] = 'NUMERIC'
 
-
     output += _header_main_effects(relations)
 
-    output += _header_categories(relations)
+    if Constants.CATEGORY:
+        output += _header_categories(relations)
+
+    if Constants.BINARY:
+        output += _header_binary(relations)        
 
     if Constants.TWO_FACTOR:
         output += _header_two_factor_effects(relations) 
