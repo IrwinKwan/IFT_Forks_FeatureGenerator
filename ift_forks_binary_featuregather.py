@@ -13,7 +13,7 @@ from collections import OrderedDict
 
 class Constants:
     DB = os.path.join('..', 'IFT_Forks_DB', 'ift_forks.sqlite')
-    OUTFILE = "ift_features-" + datetime.datetime.now().strftime("_-_%Y-%m-%d_%H%M") + ".arff"
+    OUTFILE = "ift_features-binary-" + datetime.datetime.now().strftime("_-_%Y-%m-%d_%H%M") + ".arff"
     NAME = "iftforks"
     BEFORE = -60 # in seconds
     FORKSTART = 0 # in seconds

@@ -2,8 +2,8 @@
 """Creates an ARFF file for use in WEKA based on the features in the
 commands and the codes SQLite database.
 
-This particular classifier makes "binary" features where we test
-for existence or non-existence of a command Constants.BEFORE seconds before a fork."""
+This particular classifier creates features where we test numbers of instances
+before/after a fork."""
 
 import os
 import datetime
@@ -14,12 +14,14 @@ from collections import OrderedDict
 class Constants:
     """Constants for this program"""
     DB = os.path.join('..', 'IFT_Forks_DB', 'ift_forks.sqlite')
-    OUTFILE = "ift_features-" + datetime.datetime.now().strftime("_-_%Y-%m-%d_%H%M") + ".arff"
+    OUTFILE = "ift_features-count-" + datetime.datetime.now().strftime("_-_%Y-%m-%d_%H%M") + ".arff"
     NAME = "iftforks"
-    BEFORE = -60
+    BEFORE = -180
     FORKSTART = 0
     FORKEND = 30
-    AFTER = 60
+    AFTER = 30
+
+    TWO_FACTOR = False
 
 
 class Groups:
@@ -52,6 +54,26 @@ def num_to_bool(number):
     else:
         raise Exception("A natural number is less than 0 is being converted to a bool.")
         return None
+
+def num_to_categories(number, category_map = None):
+    """Convert a number to a bin, used to make into a category.
+    A bin_table is an OrderedDict of the actual range mapped to the result."""
+
+    if category_map == None:
+        category_map = {0: "None", 1: "Few", 5: "Some", 9: "Many", 12: "Lots"}
+
+    for a_range in sorted(category_map.iterkeys()):
+
+        # Fix 16 isn't showing up as 'Lots' (in row 5)
+        if number > a_range:
+            pass
+        else:
+            return category_map[a_range]
+
+    if number > max(category_map.keys()):
+        return category_map[max(category_map.keys())]
+    else:
+        return category_map[0]
 
 def confirmed_forks(c):
     """Gets a list of forks that have a retrospective entry."""
@@ -280,6 +302,13 @@ def coded_as_fork(fork_row):
     else:
         raise ForkException("Fork conditions appear incorrect. Please check it!\n\t%s" % fork_row)
 
+
+def make_features_into_categories(attributes):
+    categories = []
+    for attribute in attributes:
+        categories.append(num_to_categories(attribute))
+    return categories
+
 def gather_features(c, fork_row):
     """A list of the features"""
     # participant = str(fork_row['participant'])
@@ -305,22 +334,78 @@ def gather_features(c, fork_row):
         num_commands_before(c, fork_row, 'RunCommand'),
         num_commands_after(c, fork_row, 'RunCommand'),
         num_search_before_open(c, fork_row, Constants.BEFORE, Constants.FORKEND),
-        num_search_before_select(c, fork_row, Constants.FORKEND, Constants.AFTER)
+        num_search_before_select(c, fork_row, Constants.FORKEND, Constants.AFTER),
     ]
 
+    # Gather all of the attributes again, but put them into categories.
+    categories = make_features_into_categories(attributes);
+    attributes += categories
+
+    return attributes
+
+def main_effects(attributes):
     output = ""
     for attribute in attributes:
-        output += "%2d," % attribute
+        output += "%2s," % str(attribute)
     output += " "
+    return output
 
+def two_factor_effects(attributes):
+    output = ""
     for attribute1 in range(0, len(attributes)):
         for attribute2 in range(attribute1 + 1, len(attributes)):
-            output += "%2d," % (attributes[attribute1] + attributes[attribute2])
+            output += "%2s," % (str(attributes[attribute1] + attributes[attribute2]))
         output += " "
+    return output
 
+def response_variable(fork_row):
+    output = ""
     output += str(coded_as_fork(fork_row)) + "\n"
     return output
 
+def features_to_datatable(attributes, fork_row):
+    output = ""
+    output += main_effects(attributes)
+
+    if Constants.TWO_FACTOR:
+        output += two_factor_effects(attributes)
+
+    output += response_variable(fork_row)
+    return output    
+
+
+def _header_main_effects(relations):
+    output = ""
+    for k,v in relations.iteritems():
+        output += "@ATTRIBUTE " + k + " " + v + "\n"
+    output += "\n"
+    return output
+
+def _header_categories(relations):
+    """For each attribute, output the version that is a categorical variable."""
+    output = ""
+    for k,v in relations.iteritems():
+        output += "@ATTRIBUTE " + 'category__' + k + " " + '{None,Few,Some,Many,Lots}' + "\n"
+    output += "\n"
+    return output
+
+def _header_two_factor_effects(relations):
+    output = ""
+    keys = relations.keys()
+    for k1 in range(0, len(keys)):
+        for k2 in range(k1 + 1, len(keys)):
+            output += "@ATTRIBUTE " + keys[k1] + "-plus-" + keys[k2] + " " + relations[keys[k2]] + "\n"
+        output += "\n"
+    return output
+
+def _header_response_variable():
+    # TrueFork: coded as fork and retrospective agrees
+    # HiddenFork: not coded as fork and retrospective disagrees
+    # FakeFork: coded as fork and retrospective disagrees
+    # NotFork: not coded as fork and retrospective agrees
+
+    # previously was "@ATTRIBUTE real_fork {Fork, TrueFork, HiddenFork, FakeFork, NotFork}"
+    return "@ATTRIBUTE real_fork {Fork, NotFork}"
 
 def header():
     """Outputs the ARFF header. If you change the features in gather_features, you have to change the
@@ -330,7 +415,6 @@ def header():
     relations = OrderedDict()
     # relations['participant'] = 'STRING'
     # relations['videotime'] = 'STRING'
-
     relations['opens_before'] = 'NUMERIC'
     relations['opens_after'] = 'NUMERIC'
     relations['selects_before'] = 'NUMERIC'
@@ -348,30 +432,20 @@ def header():
     relations['exists_search_before_open'] = 'NUMERIC'
     relations['exists_search_before_select'] = 'NUMERIC'
 
-    #relations['real_fork'] = '{Fork, NotFork}'
 
-    # TrueFork: coded as fork and retrospective agrees
-    # HiddenFork: not coded as fork and retrospective disagrees
-    # FakeFork: coded as fork and retrospective disagrees
-    # NotFork: not coded as fork and retrospective agrees
+    output += _header_main_effects(relations)
 
-    for k,v in relations.iteritems():
-        output += "@ATTRIBUTE " + k + " " + v + "\n"
-    output += "\n"
+    output += _header_categories(relations)
 
-    keys = relations.keys()
-    for k1 in range(0, len(keys)):
-        for k2 in range(k1 + 1, len(keys)):
+    if Constants.TWO_FACTOR:
+        output += _header_two_factor_effects(relations) 
 
-            output += "@ATTRIBUTE " + keys[k1] + "-plus-" + keys[k2] + " " + relations[keys[k2]] + "\n"
-        output += "\n"
-
-    # output += "@ATTRIBUTE real_fork {Fork, TrueFork, HiddenFork, FakeFork, NotFork}"
-    output += "@ATTRIBUTE real_fork {Fork, NotFork}"
+    output += _header_response_variable()
 
     output += "\n\n@DATA\n"
 
     return output
+
 
 if __name__ == "__main__":
     conn = sqlite3.connect(Constants.DB)
@@ -382,7 +456,8 @@ if __name__ == "__main__":
         output = header()
         for row in confirmed_forks(c):
             # print row
-            output += gather_features(conn.cursor(), row)
+            features = gather_features(conn.cursor(), row)
+            output += features_to_datatable(features, row)
 
         print output
         f.write(output)
