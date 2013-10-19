@@ -16,7 +16,7 @@ class Constants:
     DB = os.path.join('..', 'IFT_Forks_DB', 'ift_forks.sqlite')
     OUTFILE = "ift_features-count-" + datetime.datetime.now().strftime("_-_%Y-%m-%d_%H%M") + ".arff"
     NAME = "iftforks"
-    BEFORE = -180
+    BEFORE = -30
     FORKSTART = 0
     FORKEND = 30
     AFTER = 30
@@ -29,6 +29,9 @@ class Constants:
 
     """Whether to include two-factor interactions"""
     TWO_FACTOR = False
+
+    """Whether to output features based on Foraging Changes or on Forks"""
+    TRIGGER_EVENT = 'Fork' # (Foraging or Fork)
 
 
 class Groups:
@@ -87,6 +90,11 @@ def confirmed_forks(c):
     forks_query = "SELECT participant, videotime, retrospective, forks FROM codes \
         WHERE (retrospective <> '')"
     return c.execute(forks_query)
+
+def confirmed_foraging_changes(c):
+    """Gets a list of foraging changes."""
+    foraging_change_query = "SELECT participant, videotime, foraging_start, foraging_end FROM codes"
+    return c.execute(foraging_change_query)
 
 
 def num_commands_at_fork(c, fork_row, event, start, after):
@@ -309,6 +317,13 @@ def coded_as_fork(fork_row):
     else:
         raise ForkException("Fork conditions appear incorrect. Please check it!\n\t%s" % fork_row)
 
+def coded_as_foraging_change(fork_row):
+    """How the fork is coded"""
+    if fork_row['foraging_start'] == 'True' or fork_row['foraging_end'] == 'True':
+        return "GoalChange"
+    else:
+        return "NotGoalChange"
+
 
 def make_features_into_categories(attributes):
     categories = []
@@ -347,7 +362,7 @@ def gather_features(c, fork_row):
         num_commands_before(c, fork_row, 'RunCommand'),
         num_commands_after(c, fork_row, 'RunCommand'),
         num_search_before_open(c, fork_row, Constants.BEFORE, Constants.FORKEND),
-        num_search_before_select(c, fork_row, Constants.FORKEND, Constants.AFTER),
+        num_search_before_select(c, fork_row, Constants.FORKEND, Constants.AFTER)
     ]
 
     # Gather all of the attributes again, but put them into categories.
@@ -382,42 +397,53 @@ def two_factor_effects(attributes):
         output += " "
     return output
 
-def response_variable(fork_row):
+def constant_variables(fork_row):
     output = ""
-    output += str(coded_as_fork(fork_row)) + "\n"
+    output += "" + str(fork_row['participant']) + ", "
     return output
 
-def features_to_datatable(attributes, fork_row):
+def response_variable(fork_row, event):
+    output = ""
+
+    if event == 'Fork':
+        output += str(coded_as_fork(fork_row)) + "\n"
+    elif event == 'Foraging':
+        output += str(coded_as_foraging_change(fork_row)) + "\n"
+
+    return output
+
+def features_to_datatable(attributes, fork_row, event):
     output = ""
     output += main_effects(attributes)
 
     if Constants.TWO_FACTOR:
         output += two_factor_effects(attributes)
 
-    output += response_variable(fork_row)
+    output += constant_variables(fork_row)
+    output += response_variable(fork_row, event)
     return output    
 
 
-def _header_main_effects(relations):
+def _header_main_effects(relations, event = ""):
     output = ""
     for k,v in relations.iteritems():
-        output += "@ATTRIBUTE " + k + " " + v + "\n"
+        output += "@ATTRIBUTE " + k + "__" + event + " " + v + "\n"
     output += "\n"
     return output
 
-def _header_categories(relations):
+def _header_categories(relations, event = ""):
     """For each attribute, output the version that is a categorical variable."""
     output = ""
     for k,v in relations.iteritems():
-        output += "@ATTRIBUTE " + 'category__' + k + " " + '{None,Few,Some,Many,Lots}' + "\n"
+        output += "@ATTRIBUTE " + 'category__' + k + "__" + event + " " + '{None,Few,Some,Many,Lots}' + "\n"
     output += "\n"
     return output
 
-def _header_binary(relations):
+def _header_binary(relations, event = ""):
     """For each attribute, output the version that is a categorical variable."""
     output = ""
     for k,v in relations.iteritems():
-        output += "@ATTRIBUTE " + 'binary__' + k + " " + '{True,False,None}' + "\n"
+        output += "@ATTRIBUTE " + 'binary__' + k + "__" + event + " " + '{True,False,None}' + "\n"
     output += "\n"
     return output
 
@@ -426,20 +452,27 @@ def _header_two_factor_effects(relations):
     keys = relations.keys()
     for k1 in range(0, len(keys)):
         for k2 in range(k1 + 1, len(keys)):
-            output += "@ATTRIBUTE " + keys[k1] + "-plus-" + keys[k2] + " " + relations[keys[k2]] + "\n"
+            output += "@ATTRIBUTE " + keys[k1] + "-plus-" + keys[k2] + "__" + event + " " + relations[keys[k2]] + "\n"
         output += "\n"
     return output
 
-def _header_response_variable():
+def _header_response_variable(event):
     # TrueFork: coded as fork and retrospective agrees
     # HiddenFork: not coded as fork and retrospective disagrees
     # FakeFork: coded as fork and retrospective disagrees
     # NotFork: not coded as fork and retrospective agrees
 
     # previously was "@ATTRIBUTE real_fork {Fork, TrueFork, HiddenFork, FakeFork, NotFork}"
-    return "@ATTRIBUTE real_fork {Fork, NotFork}"
 
-def header():
+    if event == 'Fork':
+        return "@ATTRIBUTE real_fork {Fork, NotFork}"
+    elif event == 'Foraging':
+        return "@ATTRIBUTE foraging_change {GoalChange, NotGoalChange}"
+
+def _header_constant_variables():
+    return "@ATTRIBUTE participant {2,3,4,5,6,7,8,9,10,11,12}\n"
+
+def header(event):
     """Outputs the ARFF header. If you change the features in gather_features, you have to change the
     header as well and add the relations."""
     output = "@RELATION " + Constants.NAME + "\n\n"
@@ -464,18 +497,19 @@ def header():
     relations['exists_search_before_open'] = 'NUMERIC'
     relations['exists_search_before_select'] = 'NUMERIC'
 
-    output += _header_main_effects(relations)
+    output += _header_main_effects(relations, event)
 
     if Constants.CATEGORY:
-        output += _header_categories(relations)
+        output += _header_categories(relations, event)
 
     if Constants.BINARY:
-        output += _header_binary(relations)        
+        output += _header_binary(relations, event)
 
     if Constants.TWO_FACTOR:
-        output += _header_two_factor_effects(relations) 
+        output += _header_two_factor_effects(relations, event) 
 
-    output += _header_response_variable()
+    output += _header_constant_variables()
+    output += _header_response_variable(event)
 
     output += "\n\n@DATA\n"
 
@@ -488,11 +522,18 @@ if __name__ == "__main__":
     c = conn.cursor()
 
     with open(Constants.OUTFILE, 'w') as f:
-        output = header()
-        for row in confirmed_forks(c):
-            # print row
-            features = gather_features(conn.cursor(), row)
-            output += features_to_datatable(features, row)
+        output = header(Constants.TRIGGER_EVENT)
+
+        if Constants.TRIGGER_EVENT == 'Fork':
+            for row in confirmed_forks(c):
+                # print row
+                features = gather_features(conn.cursor(), row)
+                output += features_to_datatable(features, row, Constants.TRIGGER_EVENT)
+
+        elif Constants.TRIGGER_EVENT == 'Foraging':
+            for row in confirmed_foraging_changes(c):
+                features = gather_features(conn.cursor(), row)
+                output += features_to_datatable(features, row, Constants.TRIGGER_EVENT)
 
         print output
         f.write(output)
