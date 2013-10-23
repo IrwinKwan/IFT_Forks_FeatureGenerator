@@ -16,7 +16,7 @@ class Constants:
     DB = os.path.join('..', 'IFT_Forks_DB', 'ift_forks.sqlite')
     OUTFILE = "ift_features-count-" + datetime.datetime.now().strftime("_-_%Y-%m-%d_%H%M") + ".arff"
     NAME = "iftforks"
-    BEFORE = -30
+    BEFORE = -60
     FORKSTART = 0
     FORKEND = 30
     AFTER = 30
@@ -31,7 +31,7 @@ class Constants:
     TWO_FACTOR = False
 
     """Whether to output features based on Foraging Changes or on Forks"""
-    TRIGGER_EVENT = 'Fork' # (Foraging or Fork)
+    TRIGGER_EVENT = 'ForagingEnd' # (Foraging or Fork or ForagingEnd)
 
 
 class Groups:
@@ -96,6 +96,10 @@ def confirmed_foraging_changes(c):
     foraging_change_query = "SELECT participant, videotime, foraging_start, foraging_end FROM codes"
     return c.execute(foraging_change_query)
 
+def confirmed_foraging_end(c):
+    """Gets a list of foraging end."""
+    foraging_end_query = "SELECT participant, videotime, foraging_end FROM codes"
+    return c.execute(foraging_end_query)
 
 def num_commands_at_fork(c, fork_row, event, start, after):
     """Gets the number of commands for a specified Command event 'start' seconds before the fork and 'after' seconds after the
@@ -324,6 +328,12 @@ def coded_as_foraging_change(fork_row):
     else:
         return "NotGoalChange"
 
+def coded_as_foraging_end(fork_row):
+    """How the fork is coded"""
+    if fork_row['foraging_end'] == 'True':
+        return "ForagingEnd"
+    else:
+        return "NotForagingEnd"
 
 def make_features_into_categories(attributes):
     categories = []
@@ -409,6 +419,8 @@ def response_variable(fork_row, event):
         output += str(coded_as_fork(fork_row)) + "\n"
     elif event == 'Foraging':
         output += str(coded_as_foraging_change(fork_row)) + "\n"
+    elif event == 'ForagingEnd':
+        output += str(coded_as_foraging_end(fork_row)) + "\n"
 
     return output
 
@@ -468,6 +480,8 @@ def _header_response_variable(event):
         return "@ATTRIBUTE real_fork {Fork, NotFork}"
     elif event == 'Foraging':
         return "@ATTRIBUTE foraging_change {GoalChange, NotGoalChange}"
+    elif event == 'ForagingEnd':
+        return "@ATTRIBUTE foraging_end {ForagingEnd, NotForagingEnd}"
 
 def _header_constant_variables():
     return "@ATTRIBUTE participant {2,3,4,5,6,7,8,9,10,11,12}\n"
@@ -532,6 +546,11 @@ if __name__ == "__main__":
 
         elif Constants.TRIGGER_EVENT == 'Foraging':
             for row in confirmed_foraging_changes(c):
+                features = gather_features(conn.cursor(), row)
+                output += features_to_datatable(features, row, Constants.TRIGGER_EVENT)
+
+        elif Constants.TRIGGER_EVENT == 'ForagingEnd':
+            for row in confirmed_foraging_end(c):
                 features = gather_features(conn.cursor(), row)
                 output += features_to_datatable(features, row, Constants.TRIGGER_EVENT)
 
